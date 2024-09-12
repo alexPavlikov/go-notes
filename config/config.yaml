@@ -1,0 +1,17 @@
+log_level: -1
+server: 
+  path: localhost
+  port: 8080
+redis:
+  server: 
+    path: localhost
+    port: 8080
+  password: qwerty
+  db: 0
+pg:
+  server: 
+    path: localhost
+    port: 8080
+  user: postgres
+  password: AlexPAV2307
+  db_name: notes
