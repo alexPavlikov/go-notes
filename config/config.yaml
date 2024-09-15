@@ -1,0 +1,18 @@
+log_level: -1
+server: 
+  path: localhost
+  port: 8080
+redis:
+  server: 
+    path: localhost
+    port: 8080
+  password: qwerty
+  db: 0
+pg:
+  server: 
+    path: localhost
+    port: 5432
+  user: postgres
+  password: password
+  db_name: go-notes
+email: email@gmail.com
