@@ -11,7 +11,7 @@ redis:
 pg:
   server: 
     path: localhost
-    port: 8080
+    port: 5432
   user: postgres
   password: AlexPAV2307
-  db_name: notes
+  db_name: go-notes

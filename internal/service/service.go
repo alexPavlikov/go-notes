@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -14,6 +15,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
 	"golang.org/x/crypto/bcrypt"
+
+	gomail "gopkg.in/mail.v2"
 )
 
 type Services struct {
@@ -72,16 +75,21 @@ func (s *Services) AddNote(ctx context.Context, note models.Note) error {
 		return fmt.Errorf("marshal value for redis err: %w", err)
 	}
 
-	value, err := bcrypt.GenerateFromPassword(jsonNotes, 4)
-	if err != nil {
-		return fmt.Errorf("bcrypt value for redis err: %w", err)
-	}
+	value := jsonNotes
+
+	// value, err := bcrypt.GenerateFromPassword(jsonNotes, 2)
+	// if err != nil {
+	// 	return fmt.Errorf("bcrypt value for redis err: %w", err)
+	// }
 
 	keyString := note.UUID.String() + note.CreateTime
-	key, err := bcrypt.GenerateFromPassword([]byte(keyString), 4)
-	if err != nil {
-		return fmt.Errorf("bcrypt key for redis err: %w", err)
-	}
+
+	key := []byte(keyString)
+
+	// key, err := bcrypt.GenerateFromPassword([]byte(keyString), 2)
+	// if err != nil {
+	// 	return fmt.Errorf("bcrypt key for redis err: %w", err)
+	// }
 
 	if err := s.SetToRedis(ctx, string(key), value); err != nil {
 		return fmt.Errorf("send to redis err: %w", err)
@@ -92,7 +100,7 @@ func (s *Services) AddNote(ctx context.Context, note models.Note) error {
 func (s *Services) GetNotes(ctx context.Context, userID uuid.UUID, lastNoteCreate string) (notes []models.NoteStorage, err error) {
 	keyString := userID.String() + lastNoteCreate
 
-	key, err := bcrypt.GenerateFromPassword([]byte(keyString), 4)
+	key, err := bcrypt.GenerateFromPassword([]byte(keyString), 2)
 	if err != nil {
 		return nil, fmt.Errorf("bcrypt key for redis err: %w", err)
 	}
@@ -122,7 +130,9 @@ func (s *Services) Auth(ctx context.Context, user models.User) (string, string, 
 	}
 
 	if usr.IPAddress != user.IP {
-		// send to email message
+		if err := s.SendWarningToEmail(usr.Email, user.IP); err != nil {
+			return "", "", fmt.Errorf("send email err: %w", err)
+		}
 		return "", "", errors.New("another ip address")
 	}
 
@@ -134,7 +144,9 @@ func (s *Services) Auth(ctx context.Context, user models.User) (string, string, 
 		"ip":  user.IP,
 	})
 
-	tokenString, err := token.SignedString(s.Cfg.Secret)
+	verify := jwt.SigningMethodHS512.Hash.New().Sum(user.UUID.NodeID())
+
+	tokenString, err := token.SignedString(verify)
 	if err != nil {
 		return "", "", fmt.Errorf("failed access token signing string: %w", err)
 	}
@@ -143,15 +155,19 @@ func (s *Services) Auth(ctx context.Context, user models.User) (string, string, 
 		"sub": user.UUID,
 	})
 
-	refreshTokenString, err := refreshToken.SignedString(s.Cfg.Secret)
+	verifyRef := jwt.SigningMethodHS512.Hash.New().Sum(user.UUID.NodeID())
+
+	refreshTokenString, err := refreshToken.SignedString(verifyRef)
 	if err != nil {
 		return "", "", fmt.Errorf("failed refresh token signing string: %w", err)
 	}
 
-	hashRefreshToken, err := bcrypt.GenerateFromPassword(refreshToken.Signature, 4)
-	if err != nil {
-		return "", "", fmt.Errorf("hash refresh token err: %w", err)
-	}
+	// hashRefreshToken, err := bcrypt.GenerateFromPassword([]byte(refreshTokenString), 2)
+	// if err != nil {
+	// 	return "", "", fmt.Errorf("hash refresh token err: %w", err)
+	// }
+
+	hashRefreshToken := []byte(refreshTokenString)
 
 	var userStorage = models.UserStore{
 		UUID:             user.UUID,
@@ -191,17 +207,19 @@ func (s *Services) UpdateAuthUser(user models.UserStore) error {
 	return nil
 }
 
-func (s *Services) RefreshUserAuthToken(ip string, access string, refresh string) (string, error) {
+func (s *Services) RefreshUserAuthToken(ref models.Refresh) (string, error) {
+
+	verify := jwt.SigningMethodHS512.Hash.New().Sum(ref.User.NodeID())
 
 	keyFunc := func(t *jwt.Token) (interface{}, error) {
 		if _, ok := t.Method.(*jwt.SigningMethodHMAC); !ok {
-			return nil, fmt.Errorf("Неожиданный метод подписи: %v", t.Header["alg"])
+			return nil, errors.New("unexpected signature method")
 		}
-		return s.Cfg.Secret, nil
+		return verify, nil
 	}
 
 	claims := &jwt.MapClaims{}
-	_, err := jwt.ParseWithClaims(access, claims, keyFunc)
+	_, err := jwt.ParseWithClaims(ref.Access, claims, keyFunc)
 	if err != nil {
 		return "", fmt.Errorf("failed parse acces token: %w", err)
 	}
@@ -214,11 +232,13 @@ func (s *Services) RefreshUserAuthToken(ip string, access string, refresh string
 			tokenID = val.(string)
 		case "sub":
 			UUID = val.(string)
-		case "ip":
-			if val != ip {
-				//send to email
-				return "", errors.New("another ip address check your email")
-			}
+			// case "ip":
+			// 	if val != ref.IP {
+			// 		if err := s.SendWarningToEmail(); err != nil {
+			// 			return "", fmt.Errorf("send email err: %w", err)
+			// 		}
+			// 		return "", errors.New("another ip address check your email")
+			// 	}
 		}
 	}
 
@@ -229,10 +249,12 @@ func (s *Services) RefreshUserAuthToken(ip string, access string, refresh string
 		return "", fmt.Errorf("failed find access token: %w", err)
 	}
 
-	hashRefreshToken, err := bcrypt.GenerateFromPassword([]byte(refresh), 4)
-	if err != nil {
-		return "", fmt.Errorf("hash refresh token err: %w", err)
-	}
+	// hashRefreshToken, err := bcrypt.GenerateFromPassword([]byte(ref.Refresh), 2)
+	// if err != nil {
+	// 	return "", fmt.Errorf("hash refresh token err: %w", err)
+	// }
+
+	hashRefreshToken := []byte(ref.Refresh)
 
 	ctx, cancel = context.WithTimeout(context.Background(), 300*time.Millisecond)
 	defer cancel()
@@ -251,10 +273,12 @@ func (s *Services) RefreshUserAuthToken(ip string, access string, refresh string
 	token := jwt.NewWithClaims(jwt.SigningMethodHS512, jwt.MapClaims{
 		"jti": accessTokenID,
 		"sub": UUID,
-		"ip":  ip,
+		"ip":  ref.IP,
 	})
 
-	tokenString, err := token.SignedString(s.Cfg.Secret)
+	verifyNew := jwt.SigningMethodHS512.Hash.New().Sum(ref.User.NodeID())
+
+	tokenString, err := token.SignedString(verifyNew)
 	if err != nil {
 		return "", fmt.Errorf("failed access token signing string: %w", err)
 	}
@@ -266,26 +290,55 @@ func (s *Services) RefreshUserAuthToken(ip string, access string, refresh string
 	return tokenString, nil
 }
 
-func (s *Services) DecodeAccesToken(token string) (userID uuid.UUID, err error) {
+func (s *Services) DecodeAccesToken(token string, userID uuid.UUID) (err error) {
+
+	verify := jwt.SigningMethodHS512.Hash.New().Sum(userID.NodeID())
+
 	keyFunc := func(t *jwt.Token) (interface{}, error) {
 		if _, ok := t.Method.(*jwt.SigningMethodHMAC); !ok {
-			return nil, fmt.Errorf("Неожиданный метод подписи: %v", t.Header["alg"])
+			return nil, errors.New("unexpected signature method")
 		}
-		return s.Cfg.Secret, nil
+		return verify, nil
 	}
 
 	claims := &jwt.MapClaims{}
 	_, err = jwt.ParseWithClaims(token, claims, keyFunc)
 	if err != nil {
-		return userID, fmt.Errorf("failed parse acces token: %w", err)
+		return fmt.Errorf("failed parse acces token: %w", err)
 	}
+
+	var id uuid.UUID
 
 	for key, val := range *claims {
 		switch key {
 		case "sub":
-			userID = val.(uuid.UUID)
+			id = uuid.MustParse(val.(string))
 		}
 	}
 
-	return userID, nil
+	if id != userID {
+		return errors.New("decode and verify token error")
+	}
+
+	return nil
+}
+
+// sent to email warning
+func (s *Services) SendWarningToEmail(email string, ip string) error {
+	m := gomail.NewMessage()
+	m.SetHeader("From", s.Cfg.Email)
+	m.SetHeader("To", email)
+
+	m.SetHeader("Subject", "Go-notes auth warning")
+
+	message := fmt.Sprintf(`Hello, an attempt was made to log in to your account from another ip address - %s if it's not you, contact support`, ip)
+	m.SetBody("text/plain", message)
+	d := gomail.NewDialer("smtp.gmail.com", 587, s.Cfg.Email, "isei dkte iiwl wior")
+
+	d.TLSConfig = &tls.Config{InsecureSkipVerify: true}
+
+	if err := d.DialAndSend(m); err != nil {
+		return fmt.Errorf("send email warning err: %w", err)
+	}
+	return nil
 }

@@ -18,7 +18,7 @@ type Config struct {
 	Postgres Postgres `mapstructure:"pg"`
 
 	DBConnectTimeout time.Duration `mapstructure:"db_connect_timeout"`
-	Secret           string        `mapstructure:"secret"`
+	Email            string        `mpastructure:"email"`
 }
 
 type Server struct {
@@ -66,7 +66,7 @@ func Load() (*Config, error) {
 
 func fetchConfigPath() (path, filename string) {
 	flag.StringVar(&path, "config_path", "", "config path")
-	flag.StringVar(&filename, "config_filename", "", "config filename")
+	flag.StringVar(&filename, "config_name", "", "config filename")
 
 	flag.Parse()
 

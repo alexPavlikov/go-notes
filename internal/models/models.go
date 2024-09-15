@@ -15,7 +15,12 @@ type SpellerPayLoad struct {
 }
 
 type AddNotePayLoad struct {
-	Text string `json:"text"`
+	Text     string    `json:"text"`
+	UserUUID uuid.UUID `json:"uuid"`
+}
+
+type GetNotesPayLoad struct {
+	UserUUID uuid.UUID `json:"uuid"`
 }
 
 type Note struct {
@@ -47,4 +52,11 @@ type UserStore struct {
 	AccessTokenID    string
 	RefreshTokenHash string
 	IPAddress        string
+}
+
+type Refresh struct {
+	IP      string
+	Access  string
+	Refresh string
+	User    uuid.UUID
 }

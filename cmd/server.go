@@ -31,7 +31,7 @@ func Run() error {
 		return fmt.Errorf("connect to postgres err : %w", err)
 	}
 
-	redis := redisstorage.Connect(cfg.Redis.ToString(), cfg.Redis.Password, cfg.Redis.DB)
+	redis := redisstorage.RemoteConnect()
 
 	repo := repository.New(pool)
 	services := service.New(repo, redis, cfg)

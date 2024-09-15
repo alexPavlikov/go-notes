@@ -23,42 +23,45 @@ func New(services *service.Services) *Handler {
 }
 
 func (h *Handler) AddNote(w http.ResponseWriter, r *http.Request) {
+	var note models.AddNotePayLoad
+
+	dec := json.NewDecoder(r.Body)
+	if err := dec.Decode(&note); err != nil {
+		slog.Error("failed decode request body", "error", err)
+		http.Error(w, "bad request", http.StatusBadRequest)
+		return
+	}
+
 	accessCookie, err := r.Cookie("access")
 	if err != nil {
 		slog.Error("failed to get cookie access", "error", err)
 		http.Error(w, "unauthorized", http.StatusForbidden)
 	}
 
-	uuid, err := h.Services.DecodeAccesToken(accessCookie.Value)
+	err = h.Services.DecodeAccesToken(accessCookie.Value, note.UserUUID)
 	if err != nil {
 		slog.Error("failed to decode access token", "error", err)
 		http.Error(w, "unauthorized", http.StatusForbidden)
 	}
 
-	var note models.AddNotePayLoad
-
-	dec := json.NewDecoder(r.Body)
-	if err = dec.Decode(&note); err != nil {
-		http.Error(w, "bad request", http.StatusBadRequest)
-		return
-	}
-
-	note.Text, err = spellerCheckText(note.Text)
+	correctText, err := spellerCheckText(note.Text)
 	if err != nil {
-		http.Error(w, "bad request", http.StatusBadRequest)
-		return
+		slog.Error("failed send request to speller", "error", err)
+	} else {
+		note.Text = correctText
 	}
 
 	var nt = models.Note{
-		UUID:       uuid,
+		UUID:       note.UserUUID,
 		Text:       note.Text,
 		CreateTime: time.Now().Format("02012006150405"),
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
 	defer cancel()
 
 	if err := h.Services.AddNote(ctx, nt); err != nil {
+		slog.Error("failed add note", "error", err)
 		http.Error(w, "bad request", http.StatusBadRequest)
 		return
 	}
@@ -78,13 +81,21 @@ func (h *Handler) AddNote(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) GetNotes(w http.ResponseWriter, r *http.Request) {
 
+	var pl models.GetNotesPayLoad
+
+	dec := json.NewDecoder(r.Body)
+	if err := dec.Decode(&pl); err != nil {
+		http.Error(w, "bad request", http.StatusBadRequest)
+		return
+	}
+
 	accessCookie, err := r.Cookie("access")
 	if err != nil {
 		slog.Error("failed to get cookie access", "error", err)
 		http.Error(w, "unauthorized", http.StatusForbidden)
 	}
 
-	userID, err := h.Services.DecodeAccesToken(accessCookie.Value)
+	err = h.Services.DecodeAccesToken(accessCookie.Value, pl.UserUUID)
 	if err != nil {
 		slog.Error("failed to decode access token", "error", err)
 		http.Error(w, "unauthorized", http.StatusForbidden)
@@ -99,7 +110,7 @@ func (h *Handler) GetNotes(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
 	defer cancel()
 
-	notes, err := h.Services.GetNotes(ctx, userID, lastAddCookie.Value)
+	notes, err := h.Services.GetNotes(ctx, pl.UserUUID, lastAddCookie.Value)
 	if err != nil {
 		slog.Error("failed to get notes", "error", err)
 		http.Error(w, "unauthorized", http.StatusForbidden)
@@ -208,6 +219,17 @@ func (h *Handler) Auth(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) Refresh(w http.ResponseWriter, r *http.Request) {
+
+	var us models.UserPayLoad
+
+	dec := json.NewDecoder(r.Body)
+	defer r.Body.Close()
+
+	if err := dec.Decode(&us); err != nil {
+		slog.Error("failed to decode body", "error", err)
+		http.Error(w, "unauthorized", http.StatusForbidden)
+	}
+
 	ip := r.Header.Get("X-Forwarded-For")
 
 	accessCookie, err := r.Cookie("access")
@@ -222,7 +244,14 @@ func (h *Handler) Refresh(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "unauthorized", http.StatusForbidden)
 	}
 
-	accessToken, err := h.Services.RefreshUserAuthToken(ip, accessCookie.Value, refreshCookie.Value)
+	var ref = models.Refresh{
+		IP:      ip,
+		Access:  accessCookie.Value,
+		Refresh: refreshCookie.Value,
+		User:    us.UUID,
+	}
+
+	accessToken, err := h.Services.RefreshUserAuthToken(ref)
 	if err != nil {
 		slog.Error("failed to confirm user auth", "error", err)
 		http.Error(w, "unauthorized", http.StatusForbidden)

@@ -22,7 +22,7 @@ func New(pool *pgxpool.Pool) *Repository {
 
 func (r *Repository) InsertNote(ctx context.Context, nt models.Note) error {
 	query := `
-	INSERT INTO "notes" (text, create_time) VALUES ($1, $2) WHERE user_id = $3 RETURNING id
+	INSERT INTO "notes" (text, create_time, user_id) VALUES ($1, $2, $3) RETURNING id
 	`
 
 	row := r.Pool.QueryRow(ctx, query, nt.Text, nt.CreateTime, nt.UUID)
@@ -85,7 +85,7 @@ func (r *Repository) UpdateUserAuth(ctx context.Context, user models.UserStore) 
 
 func (r *Repository) SelectRefreshHashByUUID(ctx context.Context, uuid uuid.UUID) (string, error) {
 	query := `
-	SELECT hash_refresh_token FROM "users" WHERE uuid = $4
+	SELECT hash_refresh_token FROM "users" WHERE uuid = $1
 	`
 
 	row := r.Pool.QueryRow(ctx, query, uuid)
@@ -125,7 +125,7 @@ func (r *Repository) UpdateUserAccessTokenID(ctx context.Context, tokenID string
 
 	defer tx.Rollback(ctx)
 
-	query := `UPDATE "users" SET id_access_token = $1 WHERE uuid = $4 RETURNING id_access_token`
+	query := `UPDATE "users" SET id_access_token = $1 WHERE uuid = $2 RETURNING id_access_token`
 
 	row := tx.QueryRow(ctx, query, tokenID, id)
 

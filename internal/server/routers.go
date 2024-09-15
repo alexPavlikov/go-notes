@@ -30,7 +30,7 @@ func (r *Router) Build() http.Handler {
 	router.Get("/v1/get_notes", r.Handler.GetNotes)
 
 	router.Post("/v1/auth", r.Handler.Auth)
-	router.Post("/v1v/refresh", r.Handler.Refresh)
+	router.Post("/v1/refresh", r.Handler.Refresh)
 
 	return router
 }
