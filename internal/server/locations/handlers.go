@@ -251,7 +251,7 @@ func (h *Handler) Refresh(w http.ResponseWriter, r *http.Request) {
 		User:    us.UUID,
 	}
 
-	accessToken, err := h.Services.RefreshUserAuthToken(ref)
+	accessToken, refToken, err := h.Services.RefreshUserAuthToken(ref)
 	if err != nil {
 		slog.Error("failed to confirm user auth", "error", err)
 		http.Error(w, "unauthorized", http.StatusForbidden)
@@ -270,7 +270,7 @@ func (h *Handler) Refresh(w http.ResponseWriter, r *http.Request) {
 
 	cookieRefresh := http.Cookie{
 		Name:     "refresh",
-		Value:    refreshCookie.Value,
+		Value:    refToken,
 		Path:     "/",
 		Domain:   "localhost",
 		Expires:  time.Now().Add(24 * time.Hour),

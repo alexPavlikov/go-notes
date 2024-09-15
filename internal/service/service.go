@@ -162,12 +162,10 @@ func (s *Services) Auth(ctx context.Context, user models.User) (string, string, 
 		return "", "", fmt.Errorf("failed refresh token signing string: %w", err)
 	}
 
-	// hashRefreshToken, err := bcrypt.GenerateFromPassword([]byte(refreshTokenString), 2)
-	// if err != nil {
-	// 	return "", "", fmt.Errorf("hash refresh token err: %w", err)
-	// }
-
-	hashRefreshToken := []byte(refreshTokenString)
+	hashRefreshToken, err := bcrypt.GenerateFromPassword([]byte(user.UUID.String()), 2)
+	if err != nil {
+		return "", "", fmt.Errorf("hash refresh token err: %w", err)
+	}
 
 	var userStorage = models.UserStore{
 		UUID:             user.UUID,
@@ -207,7 +205,7 @@ func (s *Services) UpdateAuthUser(user models.UserStore) error {
 	return nil
 }
 
-func (s *Services) RefreshUserAuthToken(ref models.Refresh) (string, error) {
+func (s *Services) RefreshUserAuthToken(ref models.Refresh) (string, string, error) {
 
 	verify := jwt.SigningMethodHS512.Hash.New().Sum(ref.User.NodeID())
 
@@ -221,24 +219,18 @@ func (s *Services) RefreshUserAuthToken(ref models.Refresh) (string, error) {
 	claims := &jwt.MapClaims{}
 	_, err := jwt.ParseWithClaims(ref.Access, claims, keyFunc)
 	if err != nil {
-		return "", fmt.Errorf("failed parse acces token: %w", err)
+		return "", "", fmt.Errorf("failed parse acces token: %w", err)
 	}
 
-	var tokenID, UUID string
+	var tokenID string
+	var UUID uuid.UUID
 
 	for key, val := range *claims {
 		switch key {
 		case "jti":
 			tokenID = val.(string)
 		case "sub":
-			UUID = val.(string)
-			// case "ip":
-			// 	if val != ref.IP {
-			// 		if err := s.SendWarningToEmail(); err != nil {
-			// 			return "", fmt.Errorf("send email err: %w", err)
-			// 		}
-			// 		return "", errors.New("another ip address check your email")
-			// 	}
+			UUID = uuid.MustParse(val.(string))
 		}
 	}
 
@@ -246,26 +238,19 @@ func (s *Services) RefreshUserAuthToken(ref models.Refresh) (string, error) {
 	defer cancel()
 
 	if err := s.Repository.FindAccessTokenByID(ctx, tokenID); err != nil {
-		return "", fmt.Errorf("failed find access token: %w", err)
+		return "", "", fmt.Errorf("failed find access token: %w", err)
 	}
-
-	// hashRefreshToken, err := bcrypt.GenerateFromPassword([]byte(ref.Refresh), 2)
-	// if err != nil {
-	// 	return "", fmt.Errorf("hash refresh token err: %w", err)
-	// }
-
-	hashRefreshToken := []byte(ref.Refresh)
 
 	ctx, cancel = context.WithTimeout(context.Background(), 300*time.Millisecond)
 	defer cancel()
 
-	hashRef, err := s.Repository.SelectRefreshHashByUUID(ctx, uuid.MustParse(UUID))
+	hashRef, err := s.Repository.SelectRefreshHashByUUID(ctx, UUID)
 	if err != nil {
-		return "", fmt.Errorf("failed select refresh token: %w", err)
+		return "", "", fmt.Errorf("failed select refresh token: %w", err)
 	}
 
-	if string(hashRefreshToken) != hashRef {
-		return "", errors.New("another refresh token")
+	if err := bcrypt.CompareHashAndPassword([]byte(hashRef), []byte(UUID.String())); err != nil {
+		return "", "", fmt.Errorf("another refresh token: %w", err)
 	}
 
 	accessTokenID := uuid.New()
@@ -280,14 +265,30 @@ func (s *Services) RefreshUserAuthToken(ref models.Refresh) (string, error) {
 
 	tokenString, err := token.SignedString(verifyNew)
 	if err != nil {
-		return "", fmt.Errorf("failed access token signing string: %w", err)
+		return "", "", fmt.Errorf("failed access token signing string: %w", err)
 	}
 
-	if err := s.Repository.UpdateUserAccessTokenID(ctx, tokenString, uuid.MustParse(UUID)); err != nil {
-		return "", fmt.Errorf("failed update access token: %w", err)
+	refreshToken := jwt.NewWithClaims(jwt.SigningMethodHS512, jwt.MapClaims{
+		"sub": UUID,
+	})
+
+	verifyRef := jwt.SigningMethodHS512.Hash.New().Sum(UUID.NodeID())
+
+	refreshTokenString, err := refreshToken.SignedString(verifyRef)
+	if err != nil {
+		return "", "", fmt.Errorf("failed refresh token signing string: %w", err)
 	}
 
-	return tokenString, nil
+	hashRefreshToken, err := bcrypt.GenerateFromPassword([]byte(UUID.String()), 2)
+	if err != nil {
+		return "", "", fmt.Errorf("hash refresh token err: %w", err)
+	}
+
+	if err := s.Repository.UpdateUserTokens(ctx, tokenString, string(hashRefreshToken), UUID); err != nil {
+		return "", "", fmt.Errorf("failed update access token: %w", err)
+	}
+
+	return tokenString, refreshTokenString, nil
 }
 
 func (s *Services) DecodeAccesToken(token string, userID uuid.UUID) (err error) {

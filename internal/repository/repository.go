@@ -117,7 +117,7 @@ func (r *Repository) FindAccessTokenByID(ctx context.Context, id string) error {
 	return nil
 }
 
-func (r *Repository) UpdateUserAccessTokenID(ctx context.Context, tokenID string, id uuid.UUID) error {
+func (r *Repository) UpdateUserTokens(ctx context.Context, tokenID string, refToken string, id uuid.UUID) error {
 	tx, err := r.Pool.Begin(ctx)
 	if err != nil {
 		return err
@@ -125,9 +125,9 @@ func (r *Repository) UpdateUserAccessTokenID(ctx context.Context, tokenID string
 
 	defer tx.Rollback(ctx)
 
-	query := `UPDATE "users" SET id_access_token = $1 WHERE uuid = $2 RETURNING id_access_token`
+	query := `UPDATE "users" SET id_access_token = $1, hash_refresh_token = $2 WHERE uuid = $3 RETURNING id_access_token`
 
-	row := tx.QueryRow(ctx, query, tokenID, id)
+	row := tx.QueryRow(ctx, query, tokenID, refToken, id)
 
 	var access string
 
